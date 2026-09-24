@@ -18,22 +18,36 @@
 ; ---- settings -------------------------------------------------------------
 EVENT_KEY         := "{F2}"
 HOP_KEY           := "{PgUp}"
-MENU_OPEN_SEC     := 1.5   ; pause after Ctrl+Tab before pressing F2
+MENU_OPEN_SEC     := 1.5   ; (fallback if the menu can't be detected) pause after Ctrl+Tab before pressing F2
 LOAD_CHECK_SEC    := 5     ; how long to watch for a loading screen after F2
-HUD_GONE_TIMEOUT  := 60    ; after PgUp, max wait for the old server's HUD to disappear
+HOP_LEAVE_SEC     := 10    ; after PgUp, wait this long for the old server to disconnect before looking for the new one
 HUD_BACK_TIMEOUT  := 300   ; max wait for the HUD on the new server
 HUD_SETTLE_SEC    := 3     ; extra pause once the HUD is back
 MAX_HOPS          := 50    ; safety stop
-IDLE_MS           := 1500  ; background use: wait until you stop typing/moving the mouse this long before switching to the game
-IDLE_MAX_WAIT_SEC := 15    ; ...but take focus anyway after this long
+IDLE_MS           := 500   ; background use: wait until you stop typing/moving the mouse this long before switching to the game
+IDLE_MAX_WAIT_SEC := 3     ; ...but take focus anyway after this long
+FOCUS_SETTLE_MS   := 800   ; after switching to the game, wait this long before pressing keys (raise if keys get ignored)
+PEEK_EVERY_SEC    := 10    ; while a new server loads in the background, switch to the game this often to check for the HUD
+PEEK_SEC          := 2     ; how long each check looks for the HUD before switching back
+BLOCK_INPUT       := true  ; block your mouse/keyboard while the script is switched into the game
+MAX_BLOCK_SEC     := 20    ; safety: never block input longer than this (Ctrl+Alt+Del also unblocks)
 GAME              := "ahk_exe Fallout76.exe"
 ; ---------------------------------------------------------------------------
+
+; BlockInput needs admin: relaunch elevated (if you decline, it runs without blocking)
+if BLOCK_INPUT && !A_IsAdmin {
+    try {
+        Run '*RunAs "' A_AhkPath '" /restart "' A_ScriptFullPath '"'
+        ExitApp
+    }
+}
 
 SendMode "Event"
 SetKeyDelay 50, 80         ; hold keys briefly so the game registers them
 CoordMode "Pixel", "Client"
 
 running := false
+menuCheck := ""           ; "" = not tested yet, true = can see the mod menu, false = can't (fixed timing)
 borrowed := false, prevWin := 0, prevX := 0, prevY := 0
 TrayTip "Loaded. Press F8 in game to start/stop, F10 to exit.", "EventHop"
 
@@ -62,37 +76,36 @@ HopLoop() {
             return Stop("Fallout 76 window not found")
 
         Status("Server " hops + 1 ": opening mod menu")
-        PressCtrlTab()
-        if !Pause(MENU_OPEN_SEC)
+        if !OpenMenu()
             return
 
         Status("Server " hops + 1 ": trying to join event (F2)")
         Send EVENT_KEY
-        Sleep 200
-        ReturnFocus()   ; loading-screen check below works in the background
-        if WaitFor(IsLoadingScreen, LOAD_CHECK_SEC, "Server " hops + 1 ": watching for loading screen") {
+        found := WaitFor(IsLoadingScreen, LOAD_CHECK_SEC, "Server " hops + 1 ": watching for loading screen")
+        if found {
+            ReturnFocus()
             SoundBeep 1000, 300
             SoundBeep 1500, 300
             return Stop("Event found on server " hops + 1 "! Fast travelling.")
         }
-        if !running
-            return
-
-        if hops >= MAX_HOPS
-            return Stop("Gave up after " MAX_HOPS " hops")
+        if !running || hops >= MAX_HOPS {
+            ReturnFocus()
+            return running ? Stop("Gave up after " MAX_HOPS " hops") : ""
+        }
         hops++
-        BorrowFocus()
+        BorrowFocus()   ; normally still in the game (and blocked) from the event check
+        if menuCheck = true && !IsMenuOpen() {   ; menu got closed (e.g. a stray scroll) - reopen so PgUp works
+            Status("Hop " hops ": mod menu closed - reopening")
+            PressCtrlTab()
+            WaitFor(IsMenuOpen, 2.5, "Hop " hops ": reopening mod menu")
+        }
         Status("Hop " hops ": server hopping (PgUp)")
         Send HOP_KEY
         Sleep 200
-        ReturnFocus()
-
-        if !WaitFor(() => !IsHudVisible(), HUD_GONE_TIMEOUT, "Hop " hops ": leaving server") {
-            if !running
-                return
-            continue   ; hop didn't start - try the event key / hop again
-        }
-        if !WaitFor(IsHudVisible, HUD_BACK_TIMEOUT, "Hop " hops ": loading new server")
+        ReturnFocus()   ; you get your mouse/keyboard back while the hop happens
+        if !Pause(HOP_LEAVE_SEC)
+            return
+        if !WaitForHud(HUD_BACK_TIMEOUT, "Hop " hops ": loading new server")
             return running ? Stop("New server never loaded (no HUD after " HUD_BACK_TIMEOUT "s)") : ""
         if !Pause(HUD_SETTLE_SEC)
             return
@@ -100,6 +113,34 @@ HopLoop() {
 }
 
 ; ---- screen checks --------------------------------------------------------
+
+; Mod menu is open if the Pip-Boy green box borders show on the left edge (Friends box).
+IsMenuOpen() {
+    WinGetClientPos , , &w, &h, GAME
+    if !w
+        return false
+    return PixelSearch(&fx, &fy, 0, Round(90 * h / 1080), Round(30 * w / 1920), Round(210 * h / 1080), 0x1AFF80, 60)
+}
+
+; Opens the mod menu with Ctrl+Tab and waits until it's showing. The first time, checks
+; whether the menu can be seen at all; if not, falls back to a fixed wait from then on.
+OpenMenu() {
+    global menuCheck
+    if menuCheck = true && IsMenuOpen()
+        return true
+    PressCtrlTab()
+    if menuCheck = false
+        return Pause(MENU_OPEN_SEC)
+    if WaitFor(IsMenuOpen, 2.5, "Waiting for mod menu") {
+        menuCheck := true
+        return Pause(0.3)
+    }
+    if !running
+        return false
+    if menuCheck = ""
+        menuCheck := false   ; can't see the menu on this setup - use fixed timing
+    return true
+}
 
 ; HUD is showing if the AP bar is solid cream, or the HP bar is cream/red.
 IsHudVisible() {
@@ -174,6 +215,32 @@ WaitFor(check, sec, label) {
     return false
 }
 
+; Waits for the HUD on a new server. Checks in the background, and every PEEK_EVERY_SEC
+; switches to the game briefly in case the HUD can't be seen while you're in another
+; window. If the HUD is there it stays in the game (the next step needs it anyway).
+WaitForHud(sec, label) {
+    global running
+    end := A_TickCount + sec * 1000
+    nextPeek := A_TickCount + PEEK_EVERY_SEC * 1000
+    while A_TickCount < end {
+        if !running || !WinExist(GAME)
+            return false
+        if IsHudVisible()
+            return true
+        if !WinActive(GAME) && A_TickCount >= nextPeek {
+            if BorrowFocus() {
+                if WaitFor(IsHudVisible, PEEK_SEC, label " - checking game")
+                    return true
+                ReturnFocus()
+            }
+            nextPeek := A_TickCount + PEEK_EVERY_SEC * 1000
+        }
+        Status(label " (" Ceil((end - A_TickCount) / 1000) "s)")
+        Sleep 400
+    }
+    return false
+}
+
 Pause(sec) {
     global running
     end := A_TickCount + sec * 1000
@@ -197,11 +264,11 @@ PressCtrlTab() {
 ; pause in your typing/mouse use, and remembers the window and mouse position.
 BorrowFocus() {
     global borrowed, prevWin, prevX, prevY
-    borrowed := false
     if !WinExist(GAME)
         return false
     if WinActive(GAME)
         return true
+    borrowed := false
     end := A_TickCount + IDLE_MAX_WAIT_SEC * 1000
     while running && A_TimeIdlePhysical < IDLE_MS && A_TickCount < end {
         Status("Waiting for you to pause before switching to the game")
@@ -213,7 +280,8 @@ BorrowFocus() {
     if !FocusGame()
         return false
     borrowed := true
-    Sleep 300          ; let the game notice it has focus before sending keys
+    BlockUser(true)
+    Sleep FOCUS_SETTLE_MS   ; let the game notice it has focus before sending keys
     return true
 }
 
@@ -226,6 +294,23 @@ ReturnFocus() {
     try WinActivate "ahk_id " prevWin
     CoordMode "Mouse", "Screen"
     MouseMove prevX, prevY, 0
+    BlockUser(false)
+}
+
+; Blocks/unblocks your physical mouse and keyboard (the script's own keypresses still work).
+BlockUser(on) {
+    if !BLOCK_INPUT || !A_IsAdmin
+        return
+    if on {
+        BlockInput true
+        SetTimer UnblockUser, -MAX_BLOCK_SEC * 1000   ; safety release
+    } else
+        UnblockUser()
+}
+
+UnblockUser() {
+    SetTimer UnblockUser, 0
+    BlockInput false
 }
 
 FocusGame() {
@@ -241,6 +326,7 @@ FocusGame() {
 Stop(msg) {
     global running
     running := false
+    UnblockUser()
     Status(msg)
     TrayTip msg, "EventHop"
 }
