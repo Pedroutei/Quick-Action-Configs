@@ -24,6 +24,8 @@ HUD_GONE_TIMEOUT  := 60    ; after PgUp, max wait for the old server's HUD to di
 HUD_BACK_TIMEOUT  := 300   ; max wait for the HUD on the new server
 HUD_SETTLE_SEC    := 3     ; extra pause once the HUD is back
 MAX_HOPS          := 50    ; safety stop
+IDLE_MS           := 1500  ; background use: wait until you stop typing/moving the mouse this long before switching to the game
+IDLE_MAX_WAIT_SEC := 15    ; ...but take focus anyway after this long
 GAME              := "ahk_exe Fallout76.exe"
 ; ---------------------------------------------------------------------------
 
@@ -32,6 +34,7 @@ SetKeyDelay 50, 80         ; hold keys briefly so the game registers them
 CoordMode "Pixel", "Client"
 
 running := false
+borrowed := false, prevWin := 0, prevX := 0, prevY := 0
 TrayTip "Loaded. Press F8 in game to start/stop, F10 to exit.", "EventHop"
 
 F8:: {
@@ -55,7 +58,7 @@ HopLoop() {
     loop {
         if !running
             return
-        if !FocusGame()
+        if !BorrowFocus()
             return Stop("Fallout 76 window not found")
 
         Status("Server " hops + 1 ": opening mod menu")
@@ -65,6 +68,8 @@ HopLoop() {
 
         Status("Server " hops + 1 ": trying to join event (F2)")
         Send EVENT_KEY
+        Sleep 200
+        ReturnFocus()   ; loading-screen check below works in the background
         if WaitFor(IsLoadingScreen, LOAD_CHECK_SEC, "Server " hops + 1 ": watching for loading screen") {
             SoundBeep 1000, 300
             SoundBeep 1500, 300
@@ -76,9 +81,11 @@ HopLoop() {
         if hops >= MAX_HOPS
             return Stop("Gave up after " MAX_HOPS " hops")
         hops++
-        FocusGame()
+        BorrowFocus()
         Status("Hop " hops ": server hopping (PgUp)")
         Send HOP_KEY
+        Sleep 200
+        ReturnFocus()
 
         if !WaitFor(() => !IsHudVisible(), HUD_GONE_TIMEOUT, "Hop " hops ": leaving server") {
             if !running
@@ -184,6 +191,41 @@ PressCtrlTab() {
     Send "{Tab}"
     Sleep 80
     Send "{Ctrl up}"
+}
+
+; Switches to the game to press keys. If you're using another window, waits for a
+; pause in your typing/mouse use, and remembers the window and mouse position.
+BorrowFocus() {
+    global borrowed, prevWin, prevX, prevY
+    borrowed := false
+    if !WinExist(GAME)
+        return false
+    if WinActive(GAME)
+        return true
+    end := A_TickCount + IDLE_MAX_WAIT_SEC * 1000
+    while running && A_TimeIdlePhysical < IDLE_MS && A_TickCount < end {
+        Status("Waiting for you to pause before switching to the game")
+        Sleep 100
+    }
+    prevWin := WinExist("A")
+    CoordMode "Mouse", "Screen"
+    MouseGetPos &prevX, &prevY
+    if !FocusGame()
+        return false
+    borrowed := true
+    Sleep 300          ; let the game notice it has focus before sending keys
+    return true
+}
+
+; Switches back to the window you were using, if BorrowFocus took focus.
+ReturnFocus() {
+    global borrowed
+    if !borrowed
+        return
+    borrowed := false
+    try WinActivate "ahk_id " prevWin
+    CoordMode "Mouse", "Screen"
+    MouseMove prevX, prevY, 0
 }
 
 FocusGame() {
