@@ -1,0 +1,207 @@
+{
+	"enabled": true,
+	"x": 550,
+	"y": 100,
+	"width": 250,
+	"height": 40,
+	"textSize": 22,
+	"textFont": "$MAIN_Font_Bold",
+	"textAlignH": "center",
+	"textAlignV": "center",
+	"textColor": "0x1AFF80",
+	"borderColor": "0x1AFF80",
+	"backgroundColor": "0x111111",
+	"border": true,
+	"background": true,
+	"underline": false,
+	"alpha": 1.0,
+	"activateSound": "UIMenuOK",
+
+	"debugKeys": false,
+	"debug": {
+		"enabled": false,
+		"x": 550,
+		"y": 75,
+		"width": 250,
+		"height": 140,
+		"textSize": 18,
+		"borderColor": -1,
+		"border": true,
+		"background": true
+	},
+
+	"actions": [
+	// FRIENDS
+		{
+			"action": "",
+			"x": 10, "y": 75, "width": 210, "height": 145,
+			"textSize": 16,
+			"text": "Friends",
+			"textAlignV": "top"
+		},
+		{
+			"action": "joinFriend",
+			"data": "silverwiggy",
+			"x": 20, "y": 100, "width": 125, "height": 30,
+			"textSize": 16,
+			"text": "Join silverwiggy",
+			"hotkey": ""
+		},
+		{
+			"action": "inviteFriend",
+			"data": "silverwiggy",
+			"x": 150, "y": 100, "width": 60, "height": 30,
+			"textSize": 16,
+			"text": "Invite",
+			"hotkey": ""
+		},
+		{
+			"action": "joinFriend",
+			"data": "Snib3r",
+			"x": 20, "y": 140, "width": 125, "height": 30,
+			"textSize": 16,
+			"text": "Join Snib3r",
+			"hotkey": ""
+		},
+		{
+			"action": "inviteFriend",
+			"data": "Snib3r",
+			"x": 150, "y": 140, "width": 60, "height": 30,
+			"textSize": 16,
+			"text": "Invite",
+			"hotkey": ""
+		},
+		{
+			"action": "joinFriend",
+			"data": "fastzoomber",
+			"x": 20, "y": 180, "width": 125, "height": 30,
+			"textSize": 16,
+			"text": "Join fastzoomber",
+			"hotkey": ""
+		},
+		{
+			"action": "inviteFriend",
+			"data": "fastzoomber",
+			"x": 150, "y": 180, "width": 60, "height": 30,
+			"textSize": 16,
+			"text": "Invite",
+			"hotkey": ""
+		},
+
+	// TEAMS
+		{
+			"action": "",
+			"x": 10, "y": 230, "width": 210, "height": 105,
+			"textSize": 16,
+			"text": "Teams",
+			"textAlignV": "top"
+		},
+		{
+			"action": "createCasualTeam",
+			"x": 20, "y": 255, "width": 90, "height": 30,
+			"textSize": 16,
+			"text": "Casual",
+			"hotkey": ""
+		},
+		{
+			"action": "createRoleplayTeam",
+			"x": 120, "y": 255, "width": 90, "height": 30,
+			"textSize": 16,
+			"text": "Roleplay",
+			"hotkey": ""
+		},
+		{
+			"action": "createBuildingTeam",
+			"x": 20, "y": 295, "width": 90, "height": 30,
+			"textSize": 16,
+			"text": "Building",
+			"hotkey": ""
+		},
+		{
+			"action": "createHuntersTeam",
+			"x": 120, "y": 295, "width": 90, "height": 30,
+			"textSize": 16,
+			"text": "Hunting",
+			"hotkey": ""
+		},
+
+	// SHORTCUTS
+		{
+			"action": "",
+			"x": 10, "y": 345, "width": 210, "height": 145,
+			"textSize": 16,
+			"text": "Shortcuts",
+			"textAlignV": "top"
+		},
+		{
+			"action": "joinPublicWorld",
+			"x": 20, "y": 370, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Public World/Hop",
+			"hotkey": "pgup"
+		},
+		{
+			"action": "campFastTravel",
+			"x": 20, "y": 410, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Camp Fast Travel",
+			"hotkey": "pgdn"
+		},
+		{
+			"action": "quickJoinTeam",
+			"data": "casual",
+			"x": 20, "y": 450, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Quick Join Casual",
+			"hotkey": "home"
+		},
+
+	// JOIN EVENTS
+		{
+			"action": "",
+			"x": 10, "y": 500, "width": 210, "height": 225,
+			"textSize": 16,
+			"text": "Join Events",
+			"textAlignV": "top"
+		},
+		{
+			"action": "joinEvent",
+			"data": "Infestation",
+			"x": 20, "y": 525, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Infestation",
+			"hotkey": "F1"
+		},
+		{
+			"action": "joinEvent",
+			"data": "(sinkhole solutions|gearin'? up)",
+			"x": 20, "y": 565, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Sinkhole/Gearin' Up",
+			"hotkey": "F2"
+		},
+		{
+			"action": "joinEvent",
+			"data": "Bounty Hunt",
+			"x": 20, "y": 605, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "{hotkey}) Join Head Hunt",
+			"hotkey": "F3"
+		},
+		{
+			"action": "joinPublicEvent",
+			"x": 20, "y": 645, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "Join Public Event",
+			"hotkey": ""
+		},
+		{
+			"action": "joinEvent",
+			"data": "(neurological warfare|scorched earth|seismic activity|colossal problem|encryptid)",
+			"x": 20, "y": 685, "width": 190, "height": 30,
+			"textSize": 16,
+			"text": "Join Boss Event",
+			"hotkey": ""
+		}
+	]
+}
