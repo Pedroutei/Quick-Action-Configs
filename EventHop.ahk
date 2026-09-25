@@ -10,8 +10,12 @@
 ;      No loading screen?       -> PgUp to server hop, wait for the HUD (HP/AP bars)
 ;                                  on the new server, then back to step 1
 ;
-;   F8  = start / stop
-;   F10 = exit script
+;   F8       = start / stop now
+;   Shift+F8 = turn the schedule on / off
+;   F10      = exit script
+;
+; Schedule: starts by itself at :00, :20 and :40 (when the event starts) and stops
+; 10 minutes later if it hasn't found the event by then.
 ;
 ; Screen checks use colours from a 1920x1080 screenshot and scale to the window size.
 
@@ -32,6 +36,9 @@ PEEK_SEC          := 2     ; how long each check looks for the HUD before switch
 BLOCK_INPUT       := true  ; block your mouse/keyboard while the script is switched into the game
 MAX_BLOCK_SEC     := 20    ; safety: never block input longer than this (Ctrl+Alt+Del also unblocks)
 GAME              := "ahk_exe Fallout76.exe"
+SCHEDULE          := true  ; start automatically when the event starts (Shift+F8 toggles)
+SCHEDULE_EVERY    := 20    ; events start every 20 minutes (:00, :20, :40) on every server
+SCHEDULE_RUN_MIN  := 10    ; stop this many minutes after the start if the event wasn't found
 ; ---------------------------------------------------------------------------
 
 ; BlockInput needs admin: relaunch elevated (if you decline, it runs without blocking)
@@ -49,24 +56,72 @@ CoordMode "Pixel", "Client"
 running := false
 menuCheck := ""           ; "" = not tested yet, true = can see the mod menu, false = can't (fixed timing)
 borrowed := false, prevWin := 0, prevX := 0, prevY := 0
-TrayTip "Loaded. Press F8 in game to start/stop, F10 to exit.", "EventHop"
+scheduled := false        ; true while a run was started by the schedule
+lastSlot := -1            ; the 20-minute slot already handled (so it only starts once per slot)
+TrayTip "Loaded. Press F8 in game to start/stop, Shift+F8 for the schedule (" (SCHEDULE ? "on" : "off") "), F10 to exit.", "EventHop"
+SetTimer ScheduleTick, 1000
 
 F8:: {
-    global running
+    global running, scheduled, lastSlot
     running := !running
+    scheduled := false
     if running {
         SoundBeep 800, 150     ; one beep = started
         SetTimer HopLoop, -300
     } else {
+        lastSlot := CurrentSlot()   ; stopped by hand - don't restart until the next event
         SoundBeep 500, 150     ; low beep = stopped
         SoundBeep 400, 150
+        UnblockUser()
         Status("EventHop stopped")
+    }
+}
+
++F8:: {
+    global SCHEDULE
+    SCHEDULE := !SCHEDULE
+    if SCHEDULE {
+        SoundBeep 1200, 120    ; two high beeps = schedule on
+        SoundBeep 1200, 120
+    } else
+        SoundBeep 400, 250     ; one long low beep = schedule off
+    TrayTip "Schedule " (SCHEDULE ? "ON - starts at every event time" : "OFF"), "EventHop"
+}
+
+; ---- schedule ------------------------------------------------------------
+
+; Number of the current 20-minute event slot, and whether we're inside its run window.
+CurrentSlot() => Floor((A_Hour * 60 + A_Min) / SCHEDULE_EVERY)
+InRunWindow() => Mod(A_Hour * 60 + A_Min, SCHEDULE_EVERY) < SCHEDULE_RUN_MIN
+
+ScheduleTick() {
+    global running, scheduled, lastSlot
+    if running && scheduled && !InRunWindow() {
+        running := false
+        scheduled := false
+        UnblockUser()
+        SoundBeep 500, 150
+        TrayTip "Event window over - stopped. Next start at the next event time.", "EventHop"
+        return
+    }
+    if SCHEDULE && !running && InRunWindow() && CurrentSlot() != lastSlot && WinExist(GAME) {
+        lastSlot := CurrentSlot()
+        running := true
+        scheduled := true
+        SoundBeep 800, 150
+        TrayTip "Event time - starting to server hop.", "EventHop"
+        SetTimer HopLoop, -300
     }
 }
 
 F10::ExitApp
 
 HopLoop() {
+    HopLoopRun()
+    ReturnFocus()   ; if it was stopped while switched into the game, switch back
+}
+
+HopLoopRun() {
     global running
     hops := 0
     loop {
