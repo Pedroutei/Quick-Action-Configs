@@ -1,41 +1,55 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-#UseHook true              ; catch F6/F9 even while the game has focus
-; InfestationHop - server hops until an Infestation is running (needs a team to join).
+#UseHook true              ; catch F6/F9/Home even while the game has focus
+; InfestationHop - opens the map on each server, drags it around looking for an
+; Infestation cloud (cloudscan.py), and server hops when there isn't one.
 ;
 ; Loop (start it while you're loaded into a server with the HUD showing):
-;   1. Ctrl+Tab  - open the mod menu
-;   2. Home      - quick join a casual team, then wait a few seconds
-;   3. F1        - join Infestation
-;   4. Loading screen appears?  -> infestation found: beep and stop
-;      No loading screen?       -> PgUp to server hop, wait for the HUD (HP/AP bars)
-;                                  on the new server, then back to step 1
+;   1. Esc       - open the map
+;   2. Drag the map to its top-left corner, then sweep it in a grid, checking each view
+;      for the dark grey cloud (input is blocked while it does this)
+;   3. Cloud found?  -> three beeps, map left on the cloud, switch you back and wait:
+;                       Home = hop anyway, F6 = stop
+;      No cloud?     -> Esc to close the map, Ctrl+Tab, PgUp to server hop
+;   4. Wait for the HUD (HP/AP bars) on the new server, then back to step 1
+;   With AUTO_SCAN := false it skips step 2 and waits for you to check the map and press Home.
 ;
-;   F6  = start / stop
-;   F9  = exit script
+;   F6   = start / stop
+;   Home = "OK, hop" (only while it's waiting for you - otherwise Home works as normal)
+;   F9   = exit script
 ;   (different keys from EventHop / HeadHuntHop, so they can all run at once)
 ;
 ; Screen checks use colours from a 1920x1080 screenshot and scale to the window size.
 
 ; ---- settings -------------------------------------------------------------
-TEAM_KEY          := "{Home}"
-EVENT_KEY         := "{F1}"
+MAP_KEY           := "{Esc}"
 HOP_KEY           := "{PgUp}"
-MENU_OPEN_SEC     := 1.5   ; (fallback if the menu can't be detected) pause after Ctrl+Tab before pressing Home
-TEAM_JOIN_SEC     := 4     ; wait after quick-joining a team before pressing F1
-LOAD_CHECK_SEC    := 5     ; how long to watch for a loading screen after F1
+CLOSE_MAP_FIRST   := true  ; press Esc to close the map before opening the mod menu (false if you close it yourself)
+MAP_CLOSE_SEC     := 1     ; pause after closing the map before Ctrl+Tab
+MENU_OPEN_SEC     := 1.5   ; (fallback if the menu can't be detected) pause after Ctrl+Tab before PgUp
 HOP_LEAVE_SEC     := 10    ; after PgUp, wait this long for the old server to disconnect before looking for the new one
 HUD_BACK_TIMEOUT  := 300   ; max wait for the HUD on the new server
-HUD_SETTLE_SEC    := 3     ; extra pause once the HUD is back
-MAX_HOPS          := 50    ; safety stop
+HUD_SETTLE_SEC    := 3     ; extra pause once the HUD is back, before opening the map
+MAX_HOPS          := 100   ; safety stop
 IDLE_MS           := 500   ; background use: wait until you stop typing/moving the mouse this long before switching to the game
 IDLE_MAX_WAIT_SEC := 3     ; ...but take focus anyway after this long
 FOCUS_SETTLE_MS   := 800   ; after switching to the game, wait this long before pressing keys (raise if keys get ignored)
 PEEK_EVERY_SEC    := 10    ; while a new server loads in the background, switch to the game this often to check for the HUD
 PEEK_SEC          := 2     ; how long each check looks for the HUD before switching back
 BLOCK_INPUT       := true  ; block your mouse/keyboard while the script is switched into the game
-MAX_BLOCK_SEC     := 20    ; safety: never block input longer than this (Ctrl+Alt+Del also unblocks)
+MAX_BLOCK_SEC     := 45    ; safety: never block input longer than this (Ctrl+Alt+Del also unblocks) - the map scan takes ~25s
 GAME              := "ahk_exe Fallout76.exe"
+; map scan
+AUTO_SCAN         := true  ; scan the map for the cloud and hop by itself when there isn't one
+MAP_OPEN_SEC      := 1.5   ; wait after Esc for the map to open
+CORNER_DRAGS      := 5     ; drags towards the top-left to start the sweep from the map's corner
+SCAN_COLS         := 4     ; views across (map is ~2 screens wide)
+SCAN_ROWS         := 4     ; views down (map is ~3 screens tall)
+STEP_X            := 700   ; how far each sideways drag moves (pixels at 1920x1080, max 750)
+STEP_Y            := 700   ; how far each downward drag moves (max 700)
+DRAG_SETTLE_MS    := 350   ; wait after a drag before checking the view
+PYTHON            := "python"
+SAVE_ALL_SCANS    := false ; true = save every view to cloudshots\ (views with a cloud are always saved)
 ; ---------------------------------------------------------------------------
 
 ; BlockInput needs admin: relaunch elevated (if you decline, it runs without blocking)
@@ -51,67 +65,103 @@ SetKeyDelay 50, 80         ; hold keys briefly so the game registers them
 CoordMode "Pixel", "Client"
 
 running := false
+waitingForOk := false     ; true while the map is open and it's waiting for you to press Home
 menuCheck := ""           ; "" = not tested yet, true = can see the mod menu, false = can't (fixed timing)
 borrowed := false, prevWin := 0, prevX := 0, prevY := 0
-TrayTip "Loaded. Press F6 in game to start/stop, F9 to exit.", "InfestationHop"
+TrayTip "Loaded. Press F6 in game to start/stop, Home to hop after checking the map, F9 to exit.", "InfestationHop"
 
 F6:: {
-    global running
+    global running, waitingForOk
     running := !running
+    waitingForOk := false
     if running {
         SoundBeep 800, 150     ; one beep = started
         SetTimer HopLoop, -300
     } else {
         SoundBeep 500, 150     ; low beep = stopped
         SoundBeep 400, 150
+        UnblockUser()
         Status("InfestationHop stopped")
     }
 }
 
 F9::ExitApp
 
+#HotIf waitingForOk
+Home:: {
+    global waitingForOk
+    waitingForOk := false
+    SoundBeep 1000, 80
+}
+#HotIf
+
 HopLoop() {
-    global running
+    HopLoopRun()
+    ReturnFocus()   ; if it was stopped while switched into the game, switch back
+}
+
+HopLoopRun() {
+    global running, waitingForOk
     hops := 0
     loop {
         if !running
             return
+
+        ; 1. open the map
         if !BorrowFocus()
             return Stop("Fallout 76 window not found")
+        Status("Server " hops + 1 ": opening map (Esc)")
+        Send MAP_KEY
+        if !Pause(MAP_OPEN_SEC)
+            return
 
-        Status("Server " hops + 1 ": opening mod menu")
+        ; 2. scan it for a cloud - or, if there is one / scanning is off, wait for your OK
+        result := AUTO_SCAN ? ScanMap("Server " hops + 1) : "manual"
+        if result = "stopped" || !running
+            return
+        if result != "none" {
+            ReturnFocus()
+            if result = "found" {
+                SoundBeep 1500, 150
+                SoundBeep 1500, 150
+                SoundBeep 1500, 150
+                TrayTip "Infestation cloud on server " hops + 1 "! Home = hop anyway, F6 = stop", "InfestationHop"
+            } else if result = "error" {
+                SoundBeep 400, 300
+                TrayTip "Couldn't scan the map (see cloudscan.py) - check it yourself, Home to hop", "InfestationHop"
+            } else
+                SoundBeep 1200, 150    ; map is up - have a look
+            waitingForOk := true
+            while running && waitingForOk {
+                Status("Server " hops + 1 ": " (result = "found" ? "cloud found" : "check the map") " - Home to hop, F6 to stop")
+                Sleep 250
+            }
+            waitingForOk := false
+            if !running
+                return
+        }
+        if hops >= MAX_HOPS
+            return Stop("Gave up after " MAX_HOPS " hops")
+        hops++
+
+        ; 3. close the map, open the mod menu, hop
+        if !BorrowFocus()
+            return Stop("Fallout 76 window not found")
+        if CLOSE_MAP_FIRST {
+            Status("Hop " hops ": closing map (Esc)")
+            Send MAP_KEY
+            if !Pause(MAP_CLOSE_SEC)
+                return
+        }
+        Status("Hop " hops ": opening mod menu")
         if !OpenMenu()
             return
-
-        Status("Server " hops + 1 ": quick joining casual team (Home)")
-        Send TEAM_KEY
-        if !Pause(TEAM_JOIN_SEC)
-            return
-
-        Status("Server " hops + 1 ": trying to join Infestation (F1)")
-        Send EVENT_KEY
-        found := WaitFor(IsLoadingScreen, LOAD_CHECK_SEC, "Server " hops + 1 ": watching for loading screen")
-        if found {
-            ReturnFocus()
-            SoundBeep 1000, 300
-            SoundBeep 1500, 300
-            return Stop("Infestation found on server " hops + 1 "! Fast travelling.")
-        }
-        if !running || hops >= MAX_HOPS {
-            ReturnFocus()
-            return running ? Stop("Gave up after " MAX_HOPS " hops") : ""
-        }
-        hops++
-        BorrowFocus()   ; normally still in the game (and blocked) from the event check
-        if menuCheck = true && !IsMenuOpen() {   ; menu got closed (e.g. a stray scroll) - reopen so PgUp works
-            Status("Hop " hops ": mod menu closed - reopening")
-            PressCtrlTab()
-            WaitFor(IsMenuOpen, 2.5, "Hop " hops ": reopening mod menu")
-        }
         Status("Hop " hops ": server hopping (PgUp)")
         Send HOP_KEY
         Sleep 200
         ReturnFocus()   ; you get your mouse/keyboard back while the hop happens
+
+        ; 4. wait for the new server
         if !Pause(HOP_LEAVE_SEC)
             return
         if !WaitForHud(HUD_BACK_TIMEOUT, "Hop " hops ": loading new server")
@@ -119,6 +169,71 @@ HopLoop() {
         if !Pause(HUD_SETTLE_SEC)
             return
     }
+}
+
+; ---- map scan -------------------------------------------------------------
+
+; Drags the map to its top-left corner, then sweeps it row by row (zig-zag), checking
+; each view with cloudscan.py. Returns "found", "none", "error" or "stopped".
+; Leaves the map on the cloud when it finds one.
+ScanMap(label) {
+    WinGetClientPos &cx, &cy, &cw, &ch, GAME
+    if !cw
+        return "error"
+    Status(label ": moving map to the top-left corner")
+    loop CORNER_DRAGS {
+        if !running
+            return "stopped"
+        DragMap(750, 700)
+    }
+    loop SCAN_ROWS {
+        row := A_Index
+        loop SCAN_COLS {
+            if !running
+                return "stopped"
+            Status(label ": scanning map " row "," A_Index)
+            res := CheckForCloud(cx, cy, cw, ch)
+            if res != "none"
+                return res
+            if A_Index < SCAN_COLS
+                DragMap(Mod(row, 2) ? -STEP_X : STEP_X, 0)   ; zig-zag across
+        }
+        if row < SCAN_ROWS
+            DragMap(0, -STEP_Y)                              ; next row down
+    }
+    return "none"
+}
+
+; Runs cloudscan.py on the game window: exit code 2 = cloud, 0 = none, anything else = error.
+CheckForCloud(cx, cy, cw, ch) {
+    Sleep DRAG_SETTLE_MS
+    try code := RunWait('"' PYTHON '" "' A_ScriptDir '\cloudscan.py" ' cx ' ' cy ' ' cw ' ' ch (SAVE_ALL_SCANS ? " --save-all" : ""), A_ScriptDir, "Hide")
+    catch
+        return "error"
+    return code = 2 ? "found" : code = 0 ? "none" : "error"
+}
+
+; Left-click drags the map by dx,dy (1920x1080 pixels; the map follows the mouse, so a
+; negative dx shows more of the map to the right). Moves in small relative steps so the
+; game sees a real drag. Starts where the whole drag stays on open map, clear of panels.
+DragMap(dx, dy) {
+    WinGetClientPos &cx, &cy, &cw, &ch, GAME
+    sx := cw / 1920, sy := ch / 1080
+    x0 := dx > 0 ? 450 : dx < 0 ? 1200 : 800
+    y0 := dy > 0 ? 250 : dy < 0 ? 950 : 600
+    CoordMode "Mouse", "Client"
+    MouseMove Round(x0 * sx), Round(y0 * sy), 0
+    Sleep 60
+    Click "Down"
+    Sleep 60
+    steps := 15
+    loop steps {
+        MouseMove Round(dx * sx / steps), Round(dy * sy / steps), 0, "R"
+        Sleep 12
+    }
+    Sleep 60
+    Click "Up"
+    Sleep 60
 }
 
 ; ---- screen checks --------------------------------------------------------
